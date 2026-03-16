@@ -1,0 +1,70 @@
+name: Lunes Node Monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Read fail count
+        id: read
+        run: |
+          if [ -f fail_count.txt ]; then
+            COUNT=$(cat fail_count.txt)
+          else
+            COUNT=0
+          fi
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Check node
+        id: check
+        run: |
+          if nc -z node64.lunes.host 3179; then
+            echo "status=online" >> $GITHUB_OUTPUT
+          else
+            echo "status=offline" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update fail counter
+        id: update
+        run: |
+          COUNT=${{ steps.read.outputs.count }}
+
+          if [ "${{ steps.check.outputs.status }}" = "online" ]; then
+            COUNT=0
+          else
+            COUNT=$((COUNT+1))
+          fi
+
+          echo $COUNT > fail_count.txt
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Commit counter
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add fail_count.txt
+          git commit -m "update fail counter" || echo "no change"
+          git push
+
+      - name: Send Email if 3 failures
+        if: steps.update.outputs.count >= 3
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Lunes Node Offline
+          body: |
+            Your Lunes node node64.lunes.host:3179 has failed 3 checks.
+            Please check your server.
+          to: richardyang169@gmail.com
+          from: Node Monitor
